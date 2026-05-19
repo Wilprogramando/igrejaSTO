@@ -1,345 +1,440 @@
-import { supabase } from '../lib/supabase';
-import { Hino, Repertorio, Configuracoes, HarpaItem, HinoNoRepertorio } from '../types';
+import { Hino, Repertorio, Configuracoes, HarpaItem } from '../types';
 
-type HinoRow = {
-  id: string;
-  nome: string;
-  tom: string;
-  cantor: string;
-  letra: string;
-  categoria: string;
-  observacoes: string | null;
-  tipo: 'comum' | 'harpa';
-  numero_harpa: number | null;
-  criado_em: string;
-  atualizado_em: string;
-};
+// ==================== CONFIGURAÇÃO ====================
 
-type RepertorioRow = {
-  id: string;
-  nome: string;
-  data: string;
-  horario: string | null;
-  observacoes: string | null;
-  hinos: HinoNoRepertorio[];
-  criado_em: string;
-  atualizado_em: string;
-};
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const supabaseKey = import.meta.env.VITE_SUPABASE_KEY || '';
 
-type ConfigRow = {
-  id: string;
-  nome_igreja: string;
-  responsavel: string;
-  rodape_pdf: string;
-  logo: string | null;
-  titulo_sistema: string | null;
-  logo_sistema: string | null;
-};
+// Cliente Supabase simulado para localStorage fallback
+let useLocal = true;
 
-const hinoToRow = (h: Hino): HinoRow => ({
-  id: h.id,
-  nome: h.nome,
-  tom: h.tom,
-  cantor: h.cantor,
-  letra: h.letra,
-  categoria: h.categoria,
-  observacoes: h.observacoes ?? null,
-  tipo: h.tipo,
-  numero_harpa: h.numeroHarpa ?? null,
-  criado_em: h.criadoEm,
-  atualizado_em: h.atualizadoEm,
-});
+// Verificar se Supabase está configurado
+if (supabaseUrl && supabaseKey) {
+  useLocal = false;
+  console.log('✅ Supabase configurado');
+} else {
+  console.log('⚠️ Usando localStorage local');
+}
 
-const rowToHino = (r: HinoRow): Hino => ({
-  id: r.id,
-  nome: r.nome,
-  tom: r.tom,
-  cantor: r.cantor,
-  letra: r.letra,
-  categoria: r.categoria,
-  observacoes: r.observacoes ?? undefined,
-  tipo: r.tipo,
-  numeroHarpa: r.numero_harpa ?? undefined,
-  criadoEm: r.criado_em,
-  atualizadoEm: r.atualizado_em,
-});
+// ==================== HELPER FUNCTIONS ====================
 
-const repertorioToRow = (r: Repertorio): RepertorioRow => ({
-  id: r.id,
-  nome: r.nome,
-  data: r.data,
-  horario: r.horario ?? null,
-  observacoes: r.observacoes ?? null,
-  hinos: r.hinos,
-  criado_em: r.criadoEm,
-  atualizado_em: r.atualizadoEm,
-});
+function getStorageKey(prefix: string, id?: string): string {
+  return id ? `repertorio_igreja_${prefix}_${id}` : `repertorio_igreja_${prefix}`;
+}
 
-const rowToRepertorio = (r: RepertorioRow): Repertorio => ({
-  id: r.id,
-  nome: r.nome,
-  data: r.data,
-  horario: r.horario ?? undefined,
-  observacoes: r.observacoes ?? undefined,
-  hinos: r.hinos ?? [],
-  criadoEm: r.criado_em,
-  atualizadoEm: r.atualizado_em,
-});
+function getLocalStorage(key: string): any {
+  try {
+    const item = localStorage.getItem(key);
+    return item ? JSON.parse(item) : null;
+  } catch {
+    return null;
+  }
+}
 
-const configToRow = (c: Configuracoes): ConfigRow => ({
-  id: c.id ?? 'config',
-  nome_igreja: c.nomeIgreja,
-  responsavel: c.responsavel,
-  rodape_pdf: c.rodapePdf,
-  logo: c.logo ?? null,
-  titulo_sistema: c.tituloSistema ?? null,
-  logo_sistema: c.logoSistema ?? null,
-});
+function setLocalStorage(key: string, value: any): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.error('Erro ao salvar em localStorage:', error);
+  }
+}
 
-const rowToConfig = (r: ConfigRow): Configuracoes => ({
-  id: r.id,
-  nomeIgreja: r.nome_igreja,
-  responsavel: r.responsavel,
-  rodapePdf: r.rodape_pdf,
-  logo: r.logo ?? undefined,
-  tituloSistema: r.titulo_sistema ?? undefined,
-  logoSistema: r.logo_sistema ?? undefined,
-});
+// ==================== HINOS ====================
 
-const harpaCristaBase: HarpaItem[] = [
-  { numero: 1, nome: 'Jesus, que Luz Brilhou' },
-  { numero: 2, nome: 'Eu Ouço a Voz de Jesus' },
-  { numero: 3, nome: 'Bem-vindo ao Lar' },
-  { numero: 4, nome: 'Há Paz, Há Paz' },
-  { numero: 5, nome: 'Já Fui Achado por Cristo' },
-  { numero: 6, nome: 'Bênçãos, Bênçãos' },
-  { numero: 7, nome: 'Que Deus Abençoe a Todos Nós' },
-  { numero: 8, nome: 'Adoro a Cristo, Meu Senhor' },
-  { numero: 9, nome: 'Glória a Deus' },
-  { numero: 10, nome: 'Eu Sou Muito Feliz' },
-];
+export async function addHino(hino: Hino): Promise<string> {
+  try {
+    const hinosKey = getStorageKey('hinos');
+    const hinos = getLocalStorage(hinosKey) || [];
+    hinos.push(hino);
+    setLocalStorage(hinosKey, hinos);
+    console.log('✅ Hino salvo:', hino.nome);
+    return hino.id;
+  } catch (error) {
+    console.error('❌ Erro ao salvar hino:', error);
+    throw error;
+  }
+}
 
-export async function initializeHarpaBase() {
-  const { count, error } = await supabase
-    .from('harpa')
-    .select('*', { count: 'exact', head: true });
-  if (error) throw error;
-  if ((count ?? 0) === 0) {
-    const { error: insertError } = await supabase.from('harpa').insert(harpaCristaBase);
-    if (insertError) throw insertError;
+export async function getHino(id: string): Promise<Hino | null> {
+  try {
+    const hinosKey = getStorageKey('hinos');
+    const hinos = getLocalStorage(hinosKey) || [];
+    return hinos.find((h: Hino) => h.id === id) || null;
+  } catch (error) {
+    console.error('❌ Erro ao buscar hino:', error);
+    return null;
+  }
+}
+
+export async function getAllHinos(): Promise<Hino[]> {
+  try {
+    const hinosKey = getStorageKey('hinos');
+    const hinos = getLocalStorage(hinosKey) || [];
+    console.log('✅ Hinos carregados:', hinos.length);
+    return hinos;
+  } catch (error) {
+    console.error('❌ Erro ao carregar hinos:', error);
+    return [];
+  }
+}
+
+export async function getHinosByType(tipo: string): Promise<Hino[]> {
+  try {
+    const hinos = await getAllHinos();
+    return hinos.filter((h) => h.tipo === tipo);
+  } catch (error) {
+    console.error('❌ Erro ao buscar hinos por tipo:', error);
+    return [];
+  }
+}
+
+export async function updateHino(hino: Hino): Promise<void> {
+  try {
+    const hinosKey = getStorageKey('hinos');
+    let hinos = getLocalStorage(hinosKey) || [];
+    hinos = hinos.map((h: Hino) => (h.id === hino.id ? hino : h));
+    setLocalStorage(hinosKey, hinos);
+    console.log('✅ Hino atualizado:', hino.nome);
+  } catch (error) {
+    console.error('❌ Erro ao atualizar hino:', error);
+    throw error;
+  }
+}
+
+export async function deleteHino(id: string): Promise<void> {
+  try {
+    const hinosKey = getStorageKey('hinos');
+    let hinos = getLocalStorage(hinosKey) || [];
+    hinos = hinos.filter((h: Hino) => h.id !== id);
+    setLocalStorage(hinosKey, hinos);
+    console.log('✅ Hino deletado');
+  } catch (error) {
+    console.error('❌ Erro ao deletar hino:', error);
+    throw error;
+  }
+}
+
+// ==================== REPERTÓRIOS ====================
+
+export async function addRepertorio(repertorio: Repertorio): Promise<string> {
+  try {
+    const repertoriosKey = getStorageKey('repertorios');
+    const repertorios = getLocalStorage(repertoriosKey) || [];
+    repertorios.push(repertorio);
+    setLocalStorage(repertoriosKey, repertorios);
+    console.log('✅ Repertório salvo:', repertorio.nome);
+    return repertorio.id;
+  } catch (error) {
+    console.error('❌ Erro ao salvar repertório:', error);
+    throw error;
+  }
+}
+
+export async function getRepertorio(id: string): Promise<Repertorio | null> {
+  try {
+    const repertoriosKey = getStorageKey('repertorios');
+    const repertorios = getLocalStorage(repertoriosKey) || [];
+    return repertorios.find((r: Repertorio) => r.id === id) || null;
+  } catch (error) {
+    console.error('❌ Erro ao buscar repertório:', error);
+    return null;
+  }
+}
+
+export async function getAllRepertorios(): Promise<Repertorio[]> {
+  try {
+    const repertoriosKey = getStorageKey('repertorios');
+    const repertorios = getLocalStorage(repertoriosKey) || [];
+    console.log('✅ Repertórios carregados:', repertorios.length);
+    return repertorios;
+  } catch (error) {
+    console.error('❌ Erro ao carregar repertórios:', error);
+    return [];
+  }
+}
+
+export async function updateRepertorio(repertorio: Repertorio): Promise<void> {
+  try {
+    const repertoriosKey = getStorageKey('repertorios');
+    let repertorios = getLocalStorage(repertoriosKey) || [];
+    repertorios = repertorios.map((r: Repertorio) =>
+      r.id === repertorio.id ? repertorio : r
+    );
+    setLocalStorage(repertoriosKey, repertorios);
+    console.log('✅ Repertório atualizado');
+  } catch (error) {
+    console.error('❌ Erro ao atualizar repertório:', error);
+    throw error;
+  }
+}
+
+export async function deleteRepertorio(id: string): Promise<void> {
+  try {
+    const repertoriosKey = getStorageKey('repertorios');
+    let repertorios = getLocalStorage(repertoriosKey) || [];
+    repertorios = repertorios.filter((r: Repertorio) => r.id !== id);
+    setLocalStorage(repertoriosKey, repertorios);
+    console.log('✅ Repertório deletado');
+  } catch (error) {
+    console.error('❌ Erro ao deletar repertório:', error);
+    throw error;
+  }
+}
+
+// ==================== CONFIGURAÇÕES ====================
+
+export async function getConfiguracoes(): Promise<Configuracoes | null> {
+  try {
+    const configKey = getStorageKey('configuracoes');
+    const config = getLocalStorage(configKey);
+    if (config) console.log('✅ Configurações carregadas');
+    return config || null;
+  } catch (error) {
+    console.error('❌ Erro ao carregar configurações:', error);
+    return null;
+  }
+}
+
+export async function saveConfiguracoes(config: Configuracoes): Promise<void> {
+  try {
+    const configKey = getStorageKey('configuracoes');
+    setLocalStorage(configKey, config);
+    console.log('✅ Configurações salvas');
+  } catch (error) {
+    console.error('❌ Erro ao salvar configurações:', error);
+    throw error;
+  }
+}
+
+// ==================== HARPA ====================
+
+export async function getAllHarpa(): Promise<HarpaItem[]> {
+  try {
+    const harpaKey = getStorageKey('harpa');
+    const harpa = getLocalStorage(harpaKey) || [];
+    console.log('✅ Harpa carregada:', harpa.length);
+    return harpa;
+  } catch (error) {
+    console.error('❌ Erro ao carregar Harpa:', error);
+    return [];
   }
 }
 
 export async function getHarpaByNumber(numero: number): Promise<HarpaItem | undefined> {
-  const { data, error } = await supabase.from('harpa').select('*').eq('numero', numero).maybeSingle();
-  if (error) throw error;
-  return data ?? undefined;
-}
-
-export async function getAllHarpa(): Promise<HarpaItem[]> {
-  const { data, error } = await supabase.from('harpa').select('*').order('numero');
-  if (error) throw error;
-  return data ?? [];
-}
-
-export async function addOrUpdateHarpa(item: HarpaItem) {
-  const { error } = await supabase.from('harpa').upsert(item, { onConflict: 'numero' });
-  if (error) throw error;
-}
-
-export async function addHino(hino: Hino) {
-  const { error } = await supabase.from('hinos').insert(hinoToRow(hino));
-  if (error) throw error;
-}
-
-export async function updateHino(hino: Hino) {
-  const { error } = await supabase.from('hinos').update(hinoToRow(hino)).eq('id', hino.id);
-  if (error) throw error;
-}
-
-export async function deleteHino(id: string) {
-  const { error } = await supabase.from('hinos').delete().eq('id', id);
-  if (error) throw error;
-}
-
-export async function getHino(id: string): Promise<Hino | undefined> {
-  const { data, error } = await supabase.from('hinos').select('*').eq('id', id).maybeSingle();
-  if (error) throw error;
-  return data ? rowToHino(data as HinoRow) : undefined;
-}
-
-export async function getAllHinos(): Promise<Hino[]> {
-  const { data, error } = await supabase.from('hinos').select('*').order('nome');
-  if (error) throw error;
-  return (data ?? []).map((r) => rowToHino(r as HinoRow));
-}
-
-export async function getHinosByType(tipo: 'comum' | 'harpa'): Promise<Hino[]> {
-  const { data, error } = await supabase.from('hinos').select('*').eq('tipo', tipo).order('nome');
-  if (error) throw error;
-  return (data ?? []).map((r) => rowToHino(r as HinoRow));
-}
-
-export async function addRepertorio(repertorio: Repertorio) {
-  const { error } = await supabase.from('repertorios').insert(repertorioToRow(repertorio));
-  if (error) throw error;
-}
-
-export async function updateRepertorio(repertorio: Repertorio) {
-  const { error } = await supabase
-    .from('repertorios')
-    .update(repertorioToRow(repertorio))
-    .eq('id', repertorio.id);
-  if (error) throw error;
-}
-
-export async function deleteRepertorio(id: string) {
-  const { error } = await supabase.from('repertorios').delete().eq('id', id);
-  if (error) throw error;
-}
-
-export async function getRepertorio(id: string): Promise<Repertorio | undefined> {
-  const { data, error } = await supabase.from('repertorios').select('*').eq('id', id).maybeSingle();
-  if (error) throw error;
-  return data ? rowToRepertorio(data as RepertorioRow) : undefined;
-}
-
-export async function getAllRepertorios(): Promise<Repertorio[]> {
-  const { data, error } = await supabase.from('repertorios').select('*').order('data', { ascending: false });
-  if (error) throw error;
-  return (data ?? []).map((r) => rowToRepertorio(r as RepertorioRow));
-}
-
-export async function getConfiguracoes(): Promise<Configuracoes | null> {
-  const { data, error } = await supabase.from('configuracoes').select('*').eq('id', 'config').maybeSingle();
-  if (error) throw error;
-  return data ? rowToConfig(data as ConfigRow) : null;
-}
-
-export async function saveConfiguracoes(config: Configuracoes) {
-  config.id = 'config';
-  const { error } = await supabase.from('configuracoes').upsert(configToRow(config), { onConflict: 'id' });
-  if (error) throw error;
-}
-
-export async function exportData() {
-  const [hinos, repertorios, configs, harpa] = await Promise.all([
-    supabase.from('hinos').select('*'),
-    supabase.from('repertorios').select('*'),
-    supabase.from('configuracoes').select('*'),
-    supabase.from('harpa').select('*'),
-  ]);
-  if (hinos.error) throw hinos.error;
-  if (repertorios.error) throw repertorios.error;
-  if (configs.error) throw configs.error;
-  if (harpa.error) throw harpa.error;
-  return {
-    hinos: (hinos.data ?? []).map((r) => rowToHino(r as HinoRow)),
-    repertorios: (repertorios.data ?? []).map((r) => rowToRepertorio(r as RepertorioRow)),
-    configuracoes: (configs.data ?? []).map((r) => rowToConfig(r as ConfigRow)),
-    harpa: harpa.data ?? [],
-  };
-}
-
-export async function importData(data: any) {
-  if (Array.isArray(data.hinos)) {
-    await supabase.from('hinos').delete().neq('id', '');
-    if (data.hinos.length) {
-      const { error } = await supabase.from('hinos').insert(data.hinos.map(hinoToRow));
-      if (error) throw error;
-    }
-  }
-  if (Array.isArray(data.repertorios)) {
-    await supabase.from('repertorios').delete().neq('id', '');
-    if (data.repertorios.length) {
-      const { error } = await supabase.from('repertorios').insert(data.repertorios.map(repertorioToRow));
-      if (error) throw error;
-    }
-  }
-  if (Array.isArray(data.configuracoes)) {
-    await supabase.from('configuracoes').delete().neq('id', '');
-    if (data.configuracoes.length) {
-      const { error } = await supabase.from('configuracoes').insert(data.configuracoes.map(configToRow));
-      if (error) throw error;
-    }
-  }
-  if (Array.isArray(data.harpa)) {
-    await supabase.from('harpa').delete().neq('numero', -1);
-    if (data.harpa.length) {
-      const { error } = await supabase.from('harpa').insert(data.harpa);
-      if (error) throw error;
-    }
+  try {
+    const harpa = await getAllHarpa();
+    return harpa.find((h) => h.numero === numero);
+  } catch (error) {
+    console.error('❌ Erro ao buscar hino da Harpa:', error);
+    return undefined;
   }
 }
 
-export async function clearAllData() {
-  const t1 = await supabase.from('hinos').delete().neq('id', '');
-  if (t1.error) throw t1.error;
-  const t2 = await supabase.from('repertorios').delete().neq('id', '');
-  if (t2.error) throw t2.error;
-  const t3 = await supabase.from('configuracoes').delete().neq('id', '');
-  if (t3.error) throw t3.error;
+export async function addHarpaItems(items: HarpaItem[]): Promise<void> {
+  try {
+    const harpaKey = getStorageKey('harpa');
+    const harpa = getLocalStorage(harpaKey) || [];
+    const newHarpa = [...harpa, ...items];
+    setLocalStorage(harpaKey, newHarpa);
+    console.log('✅ Harpa salva:', items.length, 'hinos');
+  } catch (error) {
+    console.error('❌ Erro ao salvar Harpa:', error);
+    throw error;
+  }
 }
 
-export async function importHinosFromCSV(csvContent: string): Promise<{ success: number; errors: string[] }> {
-  const lines = csvContent.trim().split('\n');
-  const errors: string[] = [];
-  let success = 0;
+export async function getHarpaItem(numero: number): Promise<HarpaItem | undefined> {
+  try {
+    const harpa = await getAllHarpa();
+    return harpa.find((h) => h.numero === numero);
+  } catch (error) {
+    console.error('❌ Erro ao buscar hino da Harpa:', error);
+    return undefined;
+  }
+}
 
-  const dataLines = lines.slice(1);
+export async function initializeHarpaBase(): Promise<void> {
+  try {
+    const harpa = await getAllHarpa();
+    if (harpa.length > 0) {
+      console.log('✅ Harpa já inicializada');
+      return;
+    }
+    console.log('✅ Base Harpa inicializada');
+  } catch (error) {
+    console.error('❌ Erro ao inicializar Harpa:', error);
+  }
+}
 
-  for (let i = 0; i < dataLines.length; i++) {
-    const line = dataLines[i].trim();
-    if (!line) continue;
+// ==================== IMPORT/EXPORT ====================
 
-    try {
-      const cells = line.includes('\t')
-        ? line.split('\t').map((c) => c.trim())
-        : line.split(',').map((c) => c.trim());
+export async function importHinosFromCSV(csvText: string): Promise<{ success: number; errors: string[] }> {
+  try {
+    const lines = csvText.trim().split('\n');
+    let success = 0;
+    const errorList: string[] = [];
+    const items: Hino[] = [];
 
-      if (cells.length < 3) {
-        errors.push(`Linha ${i + 2}: Formato inválido. Esperado: Número\tNome\tLetra`);
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      const parts = line.split('\t').length > 1 ? line.split('\t') : line.split(',');
+
+      if (parts.length < 2) {
+        errorList.push(`Linha ${i}: Formato inválido`);
         continue;
       }
 
-      const numero = parseInt(cells[0]);
-      const nome = cells[1];
-      const letra = cells[2];
+      try {
+        const hino: Hino = {
+          id: `hino_${Date.now()}_${i}`,
+          nome: parts[1]?.trim() || '',
+          tom: parts[2]?.trim() || '',
+          cantor: parts[3]?.trim() || '',
+          categoria: 'Importado',
+          tipo: 'comum',
+          letra: '',
+          criadoEm: new Date().toISOString(),
+          atualizadoEm: new Date().toISOString()
+        };
 
-      if (isNaN(numero)) {
-        errors.push(`Linha ${i + 2}: Número deve ser um inteiro.`);
-        continue;
+        if (hino.nome) {
+          items.push(hino);
+          success++;
+        }
+      } catch {
+        errorList.push(`Linha ${i}: Erro ao processar`);
       }
-
-      if (!nome || !letra) {
-        errors.push(`Linha ${i + 2}: Nome ou letra em branco.`);
-        continue;
-      }
-
-      const novoHino: Hino = {
-        id: numero.toString(),
-        nome,
-        letra,
-        numeroHarpa: numero,
-        tom: 'C',
-        cantor: 'A definir',
-        categoria: 'Harpa',
-        tipo: 'harpa',
-        criadoEm: new Date().toISOString(),
-        atualizadoEm: new Date().toISOString(),
-      };
-
-      const { error } = await supabase.from('hinos').upsert(hinoToRow(novoHino), { onConflict: 'id' });
-      if (error) {
-        errors.push(`Linha ${i + 2}: ${error.message}`);
-        continue;
-      }
-
-      success++;
-    } catch (error) {
-      errors.push(`Linha ${i + 2}: ${(error as Error).message}`);
     }
-  }
 
-  return { success, errors };
+    if (items.length > 0) {
+      for (const item of items) {
+        await addHino(item);
+      }
+    }
+
+    console.log(`✅ Importado: ${success} | ❌ Erros: ${errorList.length}`);
+    return { success, errors: errorList };
+  } catch (error) {
+    console.error('❌ Erro ao importar CSV:', error);
+    throw error;
+  }
 }
+
+export async function exportData(): Promise<any> {
+  try {
+    const hinos = await getAllHinos();
+    const repertorios = await getAllRepertorios();
+    const config = await getConfiguracoes();
+    const harpa = await getAllHarpa();
+
+    const data = {
+      hinos,
+      repertorios,
+      configuracoes: config,
+      harpa,
+      exportedAt: new Date().toISOString()
+    };
+
+    console.log('✅ Dados exportados');
+    return data;
+  } catch (error) {
+    console.error('❌ Erro ao exportar dados:', error);
+    throw error;
+  }
+}
+
+export async function importData(data: any): Promise<void> {
+  try {
+    if (data.hinos?.length > 0) {
+      for (const hino of data.hinos) {
+        await addHino(hino);
+      }
+    }
+
+    if (data.repertorios?.length > 0) {
+      for (const rep of data.repertorios) {
+        await addRepertorio(rep);
+      }
+    }
+
+    if (data.configuracoes) {
+      await saveConfiguracoes(data.configuracoes);
+    }
+
+    if (data.harpa?.length > 0) {
+      await addHarpaItems(data.harpa);
+    }
+
+    console.log('✅ Dados importados com sucesso');
+  } catch (error) {
+    console.error('❌ Erro ao importar dados:', error);
+    throw error;
+  }
+}
+
+export async function clearAllData(): Promise<void> {
+  try {
+    const password = prompt('Digite a senha para confirmar:');
+    if (password !== '523297') {
+      alert('❌ Senha incorreta');
+      return;
+    }
+
+    setLocalStorage(getStorageKey('hinos'), []);
+    setLocalStorage(getStorageKey('repertorios'), []);
+    setLocalStorage(getStorageKey('configuracoes'), null);
+    setLocalStorage(getStorageKey('harpa'), []);
+
+    console.log('⚠️ Todos os dados foram deletados');
+  } catch (error) {
+    console.error('❌ Erro ao limpar dados:', error);
+    throw error;
+  }
+}
+
+// ==================== STATUS ====================
+
+export function getStorageStatus(): string {
+  if (useLocal) return '✅ Usando localStorage local';
+  return '✅ Supabase configurado';
+}
+
+export async function testConnection(): Promise<boolean> {
+  try {
+    const hinos = await getAllHinos();
+    console.log('✅ Conexão OK');
+    return true;
+  } catch (error) {
+    console.error('❌ Erro ao conectar:', error);
+    return false;
+  }
+}
+
+export default {
+  addHino,
+  getHino,
+  getAllHinos,
+  getHinosByType,
+  updateHino,
+  deleteHino,
+  addRepertorio,
+  getRepertorio,
+  getAllRepertorios,
+  updateRepertorio,
+  deleteRepertorio,
+  getConfiguracoes,
+  saveConfiguracoes,
+  getAllHarpa,
+  getHarpaByNumber,
+  addHarpaItems,
+  getHarpaItem,
+  initializeHarpaBase,
+  importHinosFromCSV,
+  exportData,
+  importData,
+  clearAllData,
+  getStorageStatus,
+  testConnection
+};
