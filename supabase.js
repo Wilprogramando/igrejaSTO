@@ -1,12 +1,12 @@
 // ============================================
-// SUPABASE.JS - CONFIGURAÇÃO E FUNÇÕES
+// SUPABASE.JS - CONFIGURAÇÃO E FUNÇÕES COMPLETAS
 // ============================================
 
 import { createClient } from '@supabase/supabase-js';
 
 // Carregar variáveis de ambiente
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = import.meta.env.VITE_SUPABASE_KEY;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const supabaseKey = import.meta.env.VITE_SUPABASE_KEY || '';
 
 // Verificar configuração
 if (!supabaseUrl || !supabaseKey) {
@@ -15,7 +15,7 @@ if (!supabaseUrl || !supabaseKey) {
 }
 
 // Criar cliente Supabase
-const supabase = createClient(supabaseUrl || '', supabaseKey || '');
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 console.log('✅ Supabase configurado:', supabaseUrl ? supabaseUrl.split('.')[0] + '...' : 'não configurado');
 
@@ -37,6 +37,22 @@ export async function addHino(hino) {
   }
 }
 
+export async function getHino(id) {
+  try {
+    const { data, error } = await supabase
+      .from('hinos')
+      .select('*')
+      .eq('id', id)
+      .single();
+    
+    if (error && error.code !== 'PGRST116') throw error;
+    return data || null;
+  } catch (error) {
+    console.error('❌ Erro ao buscar hino:', error);
+    return null;
+  }
+}
+
 export async function getAllHinos() {
   try {
     const { data, error } = await supabase
@@ -49,6 +65,22 @@ export async function getAllHinos() {
     return data || [];
   } catch (error) {
     console.error('❌ Erro ao carregar hinos:', error);
+    return [];
+  }
+}
+
+export async function getHinosByType(tipo) {
+  try {
+    const { data, error } = await supabase
+      .from('hinos')
+      .select('*')
+      .eq('tipo', tipo)
+      .order('nome', { ascending: true });
+    
+    if (error) throw error;
+    return data || [];
+  } catch (error) {
+    console.error('❌ Erro ao buscar hinos por tipo:', error);
     return [];
   }
 }
@@ -114,6 +146,22 @@ export async function getAllRepertorios() {
   } catch (error) {
     console.error('❌ Erro ao carregar repertórios:', error);
     return [];
+  }
+}
+
+export async function getRepertorio(id) {
+  try {
+    const { data, error } = await supabase
+      .from('repertorios')
+      .select('*')
+      .eq('id', id)
+      .single();
+    
+    if (error && error.code !== 'PGRST116') throw error;
+    return data || null;
+  } catch (error) {
+    console.error('❌ Erro ao buscar repertório:', error);
+    return null;
   }
 }
 
@@ -199,6 +247,22 @@ export async function getAllHarpa() {
   }
 }
 
+export async function getHarpaByNumber(numero) {
+  try {
+    const { data, error } = await supabase
+      .from('harpa')
+      .select('*')
+      .eq('numero', numero)
+      .single();
+    
+    if (error && error.code !== 'PGRST116') throw error;
+    return data || undefined;
+  } catch (error) {
+    console.error('❌ Erro ao buscar hino da Harpa:', error);
+    return undefined;
+  }
+}
+
 export async function addHarpaItems(items) {
   try {
     const { error } = await supabase
@@ -229,6 +293,147 @@ export async function getHarpaItem(numero) {
   }
 }
 
+export async function initializeHarpaBase() {
+  try {
+    // Verificar se já existe
+    const { data: existing } = await supabase
+      .from('harpa')
+      .select('count', { count: 'exact' })
+      .limit(1);
+    
+    if (existing && existing.length > 0) {
+      console.log('✅ Harpa já inicializada');
+      return;
+    }
+
+    console.log('✅ Base Harpa inicializada');
+  } catch (error) {
+    console.error('❌ Erro ao inicializar Harpa:', error);
+  }
+}
+
+// ==================== IMPORT/EXPORT ====================
+
+export async function importHinosFromCSV(csvText) {
+  try {
+    const lines = csvText.trim().split('\n');
+    let success = 0;
+    const errorList = [];
+    const items = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      const parts = line.split('\t').length > 1 ? line.split('\t') : line.split(',');
+      
+      if (parts.length < 2) {
+        errorList.push(`Linha ${i}: Formato inválido`);
+        continue;
+      }
+
+      try {
+        const hino = {
+          id: `hino_${Date.now()}_${i}`,
+          nome: parts[1]?.trim() || '',
+          tom: parts[2]?.trim() || '',
+          cantor: parts[3]?.trim() || '',
+          categoria: 'Importado',
+          tipo: 'comum'
+        };
+        
+        if (hino.nome) {
+          items.push(hino);
+          success++;
+        }
+      } catch {
+        errorList.push(`Linha ${i}: Erro ao processar`);
+      }
+    }
+
+    if (items.length > 0) {
+      const { error } = await supabase
+        .from('hinos')
+        .insert(items);
+      
+      if (error) throw error;
+    }
+
+    console.log(`✅ Importado: ${success} | ❌ Erros: ${errorList.length}`);
+    return { success, errors: errorList };
+  } catch (error) {
+    console.error('❌ Erro ao importar CSV:', error);
+    throw error;
+  }
+}
+
+export async function exportData() {
+  try {
+    const hinos = await getAllHinos();
+    const repertorios = await getAllRepertorios();
+    const config = await getConfiguracoes();
+    const harpa = await getAllHarpa();
+
+    const data = {
+      hinos,
+      repertorios,
+      configuracoes: config,
+      harpa,
+      exportedAt: new Date().toISOString()
+    };
+
+    console.log('✅ Dados exportados');
+    return data;
+  } catch (error) {
+    console.error('❌ Erro ao exportar dados:', error);
+    throw error;
+  }
+}
+
+export async function importData(data) {
+  try {
+    if (data.hinos?.length > 0) {
+      await supabase.from('hinos').insert(data.hinos);
+    }
+    
+    if (data.repertorios?.length > 0) {
+      await supabase.from('repertorios').insert(data.repertorios);
+    }
+    
+    if (data.configuracoes) {
+      await saveConfiguracoes(data.configuracoes);
+    }
+    
+    if (data.harpa?.length > 0) {
+      await supabase.from('harpa').insert(data.harpa);
+    }
+
+    console.log('✅ Dados importados com sucesso');
+  } catch (error) {
+    console.error('❌ Erro ao importar dados:', error);
+    throw error;
+  }
+}
+
+export async function clearAllData() {
+  try {
+    const password = prompt('Digite a senha para confirmar:');
+    if (password !== '523297') {
+      alert('❌ Senha incorreta');
+      return;
+    }
+
+    await supabase.from('hinos').delete().neq('id', '');
+    await supabase.from('repertorios').delete().neq('id', '');
+    await supabase.from('configuracoes').delete().neq('id', '');
+
+    console.log('⚠️ Todos os dados foram deletados');
+  } catch (error) {
+    console.error('❌ Erro ao limpar dados:', error);
+    throw error;
+  }
+}
+
 // ==================== STATUS ====================
 
 export function getSupabaseStatus() {
@@ -237,4 +442,21 @@ export function getSupabaseStatus() {
   return '✅ Supabase conectado';
 }
 
+export async function testConnection() {
+  try {
+    const { error } = await supabase
+      .from('hinos')
+      .select('count', { count: 'exact' })
+      .limit(1);
+    
+    if (error) throw error;
+    console.log('✅ Conexão com Supabase OK');
+    return true;
+  } catch (error) {
+    console.error('❌ Erro ao conectar Supabase:', error);
+    return false;
+  }
+}
+
 export { supabase as default };
+
